@@ -10,6 +10,8 @@
 - [IBM Z Accelerated for NVIDIA Triton™ Inference Server container image usage](#launch-container)
 - [Security and Deployment Guidelines](#security-and-deployment-guidelines)
 - [IBM Z Accelerated for NVIDIA Triton™ Inference Server Backends](#triton-server-backends)
+- [SHAP and LIME Explainability (XAI)](#xai-shap-lime)
+- [MLflow Integration](#mlflow-integration)
 - [Triton Model Analyzer](#triton-model-analyzer)
 - [REST APIs](#triton-server-restapi)
 - [Model Validation](#model-validation)
@@ -1260,6 +1262,18 @@ verified with the IBM Z Deep Learning Compiler.
 2. Create the model structure including relevant files that are needed to be
    deployed.
 3. Deploy the model on to Triton Inference Server.
+
+# SHAP and LIME Explainability (XAI) <a id="xai-shap-lime"></a>
+
+SHAP and LIME explanations can be returned as additional output tensors alongside the primary prediction. Integration differs by backend: Snap ML C++, ONNX-MLIR, and PyTorch provide backend integration, while the Python backend requires explanation logic in model.py.
+
+See the [SHAP and LIME backend guide](docs/SHAP-LIME-XAI.md) for backend-specific configuration, output tensors, request examples, and limitations.
+
+# MLflow Integration <a id="mlflow-integration"></a>
+
+The MLflow integration provides a separate workflow for model deployment operations, experiment tracking, and monitoring of Triton inference statistics.
+
+See the [MLflow integration guide](docs/MLflow-Integration.md) for the architecture, custom API endpoints, ports, deployment operations, monitoring metrics, and current limitations. Input drift and prediction drift monitoring are not supported in the current design.
 
 # Additional Topics <a id="additional-topics"></a>
 

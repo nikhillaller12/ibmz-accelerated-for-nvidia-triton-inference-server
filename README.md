@@ -10,7 +10,6 @@
 - [IBM Z Accelerated for NVIDIA Triton™ Inference Server container image usage](#launch-container)
 - [Security and Deployment Guidelines](#security-and-deployment-guidelines)
 - [IBM Z Accelerated for NVIDIA Triton™ Inference Server Backends](#triton-server-backends)
-- [SHAP and LIME Explainability (XAI)](#xai-shap-lime)
 - [MLflow Integration](#mlflow-integration)
 - [Triton Model Analyzer](#triton-model-analyzer)
 - [REST APIs](#triton-server-restapi)
@@ -294,6 +293,10 @@ NOTE:
 1. model.py should be there in the model repository to use the python backend framework.
 2. Multiple versions are supported, only positive values as version model are supported
 
+### SHAP and LIME Explainability
+
+For the Python backend, explanation generation must be implemented in the model's `model.py`. The backend does not automatically calculate SHAP or LIME from the `config.pbtxt` parameters. If your model code produces attribution values, declare the matching output tensors in `config.pbtxt` and return them with the normal inference response.
+
 ## ONNX-MLIR Backend <a id="onnx-mlir-backend"></a>
 
 A triton backend which allows the deployment of onnx-mlir or zDLC compiled
@@ -497,6 +500,32 @@ backend: "ibmsnapml"
     shape must have rank greater-or-equal-to 1, that is, the empty shape [ ] is not allowed.In case of preprocessing, the data type of Input 
     must be ```TYPE_STRING```and output tensor is ```TYPE_FP64```. For more details on 
     supported tensor data types by Triton Inference server ,vist [here](https://github.com/triton-inference-server/server/blob/r24.07/docs/user_guide/model_configuration.md#datatypes).
+
+### SHAP and LIME Explainability
+
+The Snap ML C++ backend supports SHAP and LIME explainability during inference. Enable the required explanation output using the model configuration parameters below. The attribution values are returned as additional output tensors alongside the model's regular prediction.
+
+- `COMPUTE_SHAP`: Set to `"true"` to enable SHAP attribution calculation.
+- `COMPUTE_LIME`: Set to `"true"` to enable LIME attribution calculation.
+- `SHAP_OUTPUT_TENSOR_NAME`: Output tensor name for SHAP values; defaults to `shap_values`.
+- `LIME_OUTPUT_TENSOR_NAME`: Output tensor name for LIME values; defaults to `lime_values`.
+
+Example parameters in `config.pbtxt`:
+
+```
+parameters {
+  key: "COMPUTE_SHAP"
+  value { string_value: "true" }
+}
+parameters {
+  key: "COMPUTE_LIME"
+  value { string_value: "true" }
+}
+```
+
+Declare the corresponding output tensors in `config.pbtxt` and request them by name in the regular KServe v2 inference request. The default output names are `shap_values` and `lime_values`; use matching names in the configuration and request. Attribution outputs are typically FP64, with dimensions corresponding to the model's feature count. Adjust the dimensions to your model's input shape and batching configuration.
+
+If an explanation calculation fails, the primary prediction may still be returned while the affected explanation output is zero-filled and a warning is logged. Check the Triton server logs if attribution values are unexpected.
 
 ## PyTorch Backend <a id="pytorch-backend"></a>
 
@@ -921,6 +950,49 @@ Note:
 - With this feature, you can either deploy models accepting pre-tokenized inputs ( string inputs ) or post-tokenized inputs ( `input_ids`, `attention_mask`, etc ). This is determined based on whether the tokenization information ( `tokenizer_instance_name`, `tokenizer_weights`, and `tokenizer_kwargs` ) is provided in the `config.pbtxt`.
 
 
+# MLflow Integration <a id="mlflow-integration"></a>
+
+MLflow integration adds model deployment operations, experiment tracking, and monitoring of Triton inference statistics to IBM Z Accelerated for NVIDIA Triton Inference Server. The current monitoring implementation records inference count, error count, mean inference latency, mean queue latency, and mean compute-inference latency in MLflow. Input drift and prediction drift monitoring are not supported in the current design.
+
+## Configuration
+
+The documented setup runs the MLflow tracking server and Triton Inference Server in the same container. Configure the MLflow tracking URI, Triton endpoint, and model repository for the environment. The model repository must be writable by the container process, and the monitoring worker must be able to reach Triton's statistics endpoint and the MLflow tracking server.
+
+Example host port mappings:
+
+| Host port | Container port | Service |
+| ---: | ---: | --- |
+| 5000 | 5000 | MLflow tracking UI/API |
+| 8010 | 8000 | Triton HTTP and custom MLflow APIs |
+| 8011 | 8001 | Triton gRPC |
+| 8012 | 8002 | Triton metrics |
+
+For tracking from a client, set the MLflow tracking URI to `http://localhost:5000` when using these host mappings. The Triton HTTP endpoint is available at `http://localhost:8010`.
+
+## Model deployment
+
+The custom deployment API is `/v2/mlflow_deploy`. It supports `create`, `update`, `delete`, `list`, `get`, and `predict` operations for plugin-managed model deployments. A model URI can refer to an MLflow registered model version or an alias.
+
+Example request to deploy a registered model:
+
+```bash
+curl -s -X POST http://localhost:8010/v2/mlflow_deploy \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "operation": "create",
+    "model_name": "sklearn_cancer",
+    "model_uri": "models:/sklearn_cancer@champion"
+  }'
+```
+
+The standard Triton inference endpoint remains available for predictions. The deployment adapter routes prediction requests to the deployed model's normal inference path.
+
+## Experiment tracking and monitoring
+
+Use the standard MLflow SDK and configure its tracking URI to the MLflow server to log experiment parameters, metrics, tags, artifacts, and models. The deployment API can then deploy registered models.
+
+The custom monitoring API is `/v2/mlflow_monitor`. A `monitor` operation with `watch: false` collects and logs a single monitoring window; `watch: true` starts a background watcher. The API also supports `stop` to stop one or all watchers and `list` to list active watchers. Multiple watchers can run concurrently and share the Triton statistics endpoint. Monitoring runs are logged to MLflow; use separate experiment names for training and monitoring if you want to keep their runs distinct.
+
 # Triton Model Analyzer<a id="triton-model-analyzer"></a>
 Triton Model Analyzer is a CLI tool which can help you find a more optimal configuration, on a given piece of hardware,
 for single, multiple, ensemble, or BLS models running on a Triton Inference Server. It will also generate reports to
@@ -1262,18 +1334,6 @@ verified with the IBM Z Deep Learning Compiler.
 2. Create the model structure including relevant files that are needed to be
    deployed.
 3. Deploy the model on to Triton Inference Server.
-
-# SHAP and LIME Explainability (XAI) <a id="xai-shap-lime"></a>
-
-SHAP and LIME explanations can be returned as additional output tensors alongside the primary prediction. Integration differs by backend: Snap ML C++, ONNX-MLIR, and PyTorch provide backend integration, while the Python backend requires explanation logic in model.py.
-
-See the [SHAP and LIME backend guide](docs/SHAP-LIME-XAI.md) for backend-specific configuration, output tensors, request examples, and limitations.
-
-# MLflow Integration <a id="mlflow-integration"></a>
-
-The MLflow integration provides a separate workflow for model deployment operations, experiment tracking, and monitoring of Triton inference statistics.
-
-See the [MLflow integration guide](docs/MLflow-Integration.md) for the architecture, custom API endpoints, ports, deployment operations, monitoring metrics, and current limitations. Input drift and prediction drift monitoring are not supported in the current design.
 
 # Additional Topics <a id="additional-topics"></a>
 
